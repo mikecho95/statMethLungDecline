@@ -1,0 +1,140 @@
+---
+title: "lungFxDecline"
+date: "`r Sys.Date()`"
+author: "Michael Cho"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: False
+      smooth_scroll: True
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+## require(rspiro)
+require(here)
+require(tidyverse)
+require(ggplot2)
+require(data.table)
+## working in /udd/remhc/Work/Lungfxdecline
+here::i_am("simulations.rmd")
+```
+
+# Generate baseline lung function
+```{r gen1}
+age<-seq(20,90)
+height<-160
+## standard deviation for the sampling at each time point
+fev1sd=0.4
+nSets<-2500 ## number of sets of each type
+## difference using low baseline
+lb<-0.25
+rd<-0.01 ## additional drop in FEV1 per year (dy*year)
+## NHANES3
+fev1<- 0.4333-0.00361*age-0.000194*age^2+0.00011496*height^2
+plot(x=age,y=fev1)
+## what is the best way to approximate 
+y<-0.00361*age-0.000194*age^2
+## using a single linear coefficient?  
+summary(lm(y~age))
+## gives -0.01773 as the best fit... such that
+fev1L<- 0.4333-0.01773*age+0.00011496*height^2
+plot(x=age,y=fev1,pch=16)
+points(x=age,y=fev1L,pch=25)
+```
+
+# Noise around each measurement
+
+## Create normals
+```{r samp}
+set.seed(1)
+fev1samp<-sapply(fev1,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
+fev1a<-sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x])
+plot(x=age,y=fev1a)
+plot(x=age,y=fev1a,pch=16)
+fev1Lsamp<-sapply(fev1L,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
+fev1La<-sapply(1:ncol(fev1Lsamp),function(x) fev1Lsamp[sample(1:nSets,1),x])
+points(x=age,y=fev1La,pch=25)
+
+## do more of these
+allDf<-data.frame()
+allDfL<-data.frame()
+
+for (i in 1:nSets) {
+    allDf<-rbind(allDf,sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x]))
+    allDfL<-rbind(allDfL,sapply(1:ncol(fev1Lsamp),function(x) fev1Lsamp[sample(1:nSets,1),x]))
+}
+```
+## Create lower baseline
+```{r lb}
+fev1lb<-fev1-lb
+fev1Llb<-fev1L-lb
+## plot the lb
+plot(x=age,y=fev1,pch=16)
+points(x=age,y=fev1lb,pch=1)
+points(x=age,y=fev1L,pch=15)
+points(x=age,y=fev1Llb,pch=0)
+
+## define a function to do subsequent iterations
+genSamp<-function(df,fevSource,fev1sd,nSets) {
+  fev1samp<-sapply(fevSource,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
+  for (i in 1:nSets)
+    df<-rbind(df,sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x]))
+  return(df)
+}
+allDf<-genSamp(allDf,fev1lb,fev1sd=fev1sd,nSets=nSets)
+allDfL<-genSamp(allDfL,fev1Llb,fev1sd=fev1sd,nSets=nSets)
+```
+
+## Create rapid decline
+```{r rd}
+## leave the baseline alone
+fev1rd<-fev1-0:(length(fev1)-1)*rd
+fev1Lrd<-fev1L-0:(length(fev1)-1)*rd
+plot(x=age,y=fev1,pch=16)
+points(x=age,y=fev1L,pch=15)
+points(x=age,y=fev1rd,pch=1)
+points(x=age,y=fev1Lrd,pch=0)
+## sample and add again
+allDf<-genSamp(allDf,fev1rd,fev1sd=fev1sd,nSets=nSets)
+allDfL<-genSamp(allDfL,fev1Lrd,fev1sd=fev1sd,nSets=nSets)
+```
+
+## Create low baseline and rapid decline
+```{r lbrd}
+fev1lbrd<-fev1-lb-(0:(length(fev1)-1))*rd
+fev1Llbrd<-fev1L-lb-(0:(length(fev1)-1))*rd
+plot(x=age,y=fev1,pch=16)
+points(x=age,y=fev1L,pch=15)
+points(x=age,y=fev1lbrd,pch=1)
+points(x=age,y=fev1Llbrd,pch=0)
+allDf<-genSamp(allDf,fev1lbrd,fev1sd=fev1sd,nSets=nSets)
+allDfL<-genSamp(allDfL,fev1Llbrd,fev1sd=fev1sd,nSets=nSets)
+nrow(allDf); names(allDf)<-age
+nrow(allDfL); names(allDfL)<-age
+fwrite(allDf,here::here("lungFx10k.csv.gz"))
+fwrite(allDf,here::here("lungFxL10k.csv.gz"))
+```
+
+# Plots
+```{r plotall}
+## convert to long and assign groups (the cbind command)
+longd = gather(cbind(allDf,id=1:nrow(allDf),grp=c(rep("normal",nSets),rep("lb",nSets),rep("rd",nSets),rep("lbrd",nSets))),as.character(age),key=age,value=fev1)
+head(longd)
+fwrite(longd,here::here("lungFx10kLong.csv.gz"))
+## for plotting, just pick the first 10 sample the first 10 rows of each group
+longd2<-longd[longd$id %in% c(1:10,(nSets+1):(nSets+11),(nSets*2+1):(nSets*2+11),(nSets*3+1):(nSets*3+11)),]
+ggplot(data = longd2, aes(x = age, y = fev1, group=grp, color=grp)) + geom_point(alpha = 0.3) + geom_smooth(method=NULL)
+## now try the same for the linear model
+longd = gather(cbind(allDfL,id=1:nrow(allDfL),grp=c(rep("normal",nSets),rep("lb",nSets),rep("rd",nSets),rep("lbrd",nSets))),as.character(age),key=age,value=fev1)
+head(longd)
+fwrite(longd,here::here("lungFxL10kLong.csv.gz"))
+longd2<-longd[longd$id %in% c(1:10,(nSets+1):(nSets+11),(nSets*2+1):(nSets*2+11),(nSets*3+1):(nSets*3+11)),]
+ggplot(data = longd2, aes(x = age, y = fev1, group=grp, color=grp)) + geom_point(alpha = 0.3) + geom_smooth(method="lm")
+```
+
+# SessionInfo
+```{r sessionInfo}
+sessionInfo()
+```
