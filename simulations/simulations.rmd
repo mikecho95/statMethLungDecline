@@ -25,14 +25,28 @@ here::i_am("simulations.rmd")
 ```{r gen1}
 age<-seq(20,90)
 height<-160
+## nhanes coeff
+b0<-0.4333
+b1<--0.00361
+b2<--0.000194
+b3<-0.00011496
+lln<-0.00009283
 ## standard deviation for the sampling at each time point
-fev1sd=0.4
+fev1sd=0.2
+fev1Floor<-0.25 ## minimum value, to avoid negative FEV1 numbers
+## 'standard deviation' for height and age - for NHANES, LLN was calculated as (where se is standard error for height)
+## 0.00011496-se*1.645=0.00009283
+seh<-(b3-lln)/1.645
+## however, in reality the LLN combines the effect of age and height together... we need 'error' terms for both
+## let's 'divide up' the error between height and age...
+seh/b3  ## about 10% of the original value, so let's add ?2.5% to the error in each coefficient
+err<-0.05
 nSets<-2500 ## number of sets of each type
 ## difference using low baseline
 lb<-0.25
 rd<-0.01 ## additional drop in FEV1 per year (dy*year)
 ## NHANES3
-fev1<- 0.4333-0.00361*age-0.000194*age^2+0.00011496*height^2
+fev1<-b0+b1*age+b2*age^2+b3*height^2
 plot(x=age,y=fev1)
 ## what is the best way to approximate 
 y<-0.00361*age-0.000194*age^2
@@ -42,79 +56,100 @@ summary(lm(y~age))
 fev1L<- 0.4333-0.01773*age+0.00011496*height^2
 plot(x=age,y=fev1,pch=16)
 points(x=age,y=fev1L,pch=25)
+## create this new coefficient
+b1L<--0.01773
+## constants, to look at random 'subjects' - random.  Pick your favorite number
+s1<-37
+s2<-42
 ```
 
-# Noise around each measurement
+# Simulate lung function
 
 ## Create normals
 ```{r samp}
 set.seed(1)
-fev1samp<-sapply(fev1,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
-fev1a<-sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x])
-plot(x=age,y=fev1a)
-plot(x=age,y=fev1a,pch=16)
-fev1Lsamp<-sapply(fev1L,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
-fev1La<-sapply(1:ncol(fev1Lsamp),function(x) fev1Lsamp[sample(1:nSets,1),x])
-points(x=age,y=fev1La,pch=25)
-
-## do more of these
-allDf<-data.frame()
-allDfL<-data.frame()
-
-for (i in 1:nSets) {
-    allDf<-rbind(allDf,sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x]))
-    allDfL<-rbind(allDfL,sapply(1:ncol(fev1Lsamp),function(x) fev1Lsamp[sample(1:nSets,1),x]))
-}
+## create errors - 
+errMat<-data.frame(b0=rnorm(nSets,mean=b0,sd=abs(err*b0)),
+               b1=rnorm(nSets,mean=b1,sd=abs(err*b1)),
+               b2=rnorm(nSets,mean=b2,sd=abs(err*b2)),
+               b3=rnorm(nSets,mean=b3,sd=abs(err*b3)),
+               b1L=rnorm(nSets,mean=b1L,sd=abs(err*b1L*2)))
+## noise matrix
+noise<-sapply(1:length(age),function(x) rnorm(nSets,mean=0,sd=fev1sd))
+## simulate fev1 with varied height
+fev1s<-t(sapply(1:nSets,function(x) errMat$b0[x]+errMat$b1[x]*age+errMat$b2[x]*age^2+errMat$b3[x]*height^2))
+summary(fev1s[,1])
+## compare to LLN
+b0+b1*age[1]+b2*age[1]^2+b3*height^2
+b0+b1*age[1]+b2*age[1]^2+lln*height^2
+summary(fev1s[,71])
+b0+b1*age[71]+b2*age[71]^2+b3*height^2
+b0+b1*age[71]+b2*age[71]^2+lln*height^2
+## now add in the 'noise' component of measurement. 
+summary(as.numeric(noise))
+fev1s2<-fev1s+noise
+summary(as.numeric(fev1s2))
+## we do want to apply a 'clean' function to ensure no negative numbers...
+## fev1s2<-apply(fev1s,1,function(x) sapply(x, function(x) max(x,fev1Floor)))
+summary(as.numeric(fev1s2))
+## do the same thing for linear FEV1
+fev1Ls<-t(sapply(1:nSets,function(x) errMat$b0[x]+errMat$b1L[x]*age+errMat$b3[x]*height^2))
+fev1Ls2<-fev1Ls+noise
+summary(as.numeric(fev1Ls2))
+## pick some random points and plot
+plot(x=age,y=fev1s2[s1,],pch=16)
+points(x=age,y=fev1s2[s2,],pch=17)
+points(x=age,y=fev1Ls2[s1,],pch=24)
+points(x=age,y=fev1Ls2[s2,],pch=25)
 ```
 ## Create lower baseline
 ```{r lb}
-fev1lb<-fev1-lb
-fev1Llb<-fev1L-lb
+fev1lb<-fev1s2-lb
+fev1Llb<-fev1Ls2-lb
+summary(as.numeric(fev1lb))
+summary(as.numeric(fev1Llb))
 ## plot the lb
-plot(x=age,y=fev1,pch=16)
-points(x=age,y=fev1lb,pch=1)
-points(x=age,y=fev1L,pch=15)
-points(x=age,y=fev1Llb,pch=0)
-
-## define a function to do subsequent iterations
-genSamp<-function(df,fevSource,fev1sd,nSets) {
-  fev1samp<-sapply(fevSource,function(x) rnorm(mean=x,sd=fev1sd,n=nSets))
-  for (i in 1:nSets)
-    df<-rbind(df,sapply(1:ncol(fev1samp),function(x) fev1samp[sample(1:nSets,1),x]))
-  return(df)
-}
-allDf<-genSamp(allDf,fev1lb,fev1sd=fev1sd,nSets=nSets)
-allDfL<-genSamp(allDfL,fev1Llb,fev1sd=fev1sd,nSets=nSets)
+plot(x=age,y=fev1s2[s1,],pch=16)
+points(x=age,y=fev1lb[s1,],pch=1)
+points(x=age,y=fev1Ls2[s1,],pch=15)
+points(x=age,y=fev1Llb[s2,],pch=0)
 ```
 
 ## Create rapid decline
 ```{r rd}
 ## leave the baseline alone
-fev1rd<-fev1-0:(length(fev1)-1)*rd
-fev1Lrd<-fev1L-0:(length(fev1)-1)*rd
-plot(x=age,y=fev1,pch=16)
-points(x=age,y=fev1L,pch=15)
-points(x=age,y=fev1rd,pch=1)
-points(x=age,y=fev1Lrd,pch=0)
-## sample and add again
-allDf<-genSamp(allDf,fev1rd,fev1sd=fev1sd,nSets=nSets)
-allDfL<-genSamp(allDfL,fev1Lrd,fev1sd=fev1sd,nSets=nSets)
+fev1rd<-t(sapply(1:nSets,function(x) fev1s2[x,]-0:(length(age)-1)*rd))
+fev1Lrd<-t(sapply(1:nSets,function(x) fev1Ls2[x,]-0:(length(age)-1)*rd))
+## need to fix
+fev1rd<-apply(fev1rd,2,function(x) sapply(x, function(x) max(x,fev1Floor)))
+fev1Lrd<-apply(fev1Lrd,2,function(x) sapply(x, function(x) max(x,fev1Floor)))
+summary(as.numeric(fev1rd))
+summary(as.numeric(fev1Lrd))
+plot(x=age,y=fev1s2[s1,],pch=16)
+points(x=age,y=fev1Ls2[s1,],pch=15)
+points(x=age,y=fev1rd[s1,],pch=1)
+points(x=age,y=fev1Lrd[s1,],pch=0)
 ```
 
 ## Create low baseline and rapid decline
 ```{r lbrd}
-fev1lbrd<-fev1-lb-(0:(length(fev1)-1))*rd
-fev1Llbrd<-fev1L-lb-(0:(length(fev1)-1))*rd
-plot(x=age,y=fev1,pch=16)
-points(x=age,y=fev1L,pch=15)
-points(x=age,y=fev1lbrd,pch=1)
-points(x=age,y=fev1Llbrd,pch=0)
-allDf<-genSamp(allDf,fev1lbrd,fev1sd=fev1sd,nSets=nSets)
-allDfL<-genSamp(allDfL,fev1Llbrd,fev1sd=fev1sd,nSets=nSets)
-nrow(allDf); names(allDf)<-age
-nrow(allDfL); names(allDfL)<-age
+fev1lbrd<-t(sapply(1:nSets,function(x) fev1lb[x,]-0:(length(age)-1)*rd))
+fev1Llbrd<-t(sapply(1:nSets,function(x) fev1Llb[x,]-0:(length(age)-1)*rd))
+fev1lbrd<-apply(fev1lbrd,2,function(x) sapply(x, function(x) max(x,fev1Floor)))
+fev1Llbrd<-apply(fev1Llbrd,2,function(x) sapply(x, function(x) max(x,fev1Floor)))
+summary(as.numeric(fev1rd))
+summary(as.numeric(fev1Lrd))
+plot(x=age,y=fev1s2[s1,],pch=16)
+points(x=age,y=fev1Ls2[s1,],pch=15)
+points(x=age,y=fev1lbrd[s1,],pch=1)
+points(x=age,y=fev1Llbrd[s1,],pch=0)
+## make one df
+allDf<-data.frame(rbind(fev1s2,fev1lb,fev1rd,fev1lbrd))
+names(allDf)<-age
+allDfL<-data.frame(rbind(fev1Ls2,fev1Llb,fev1Lrd,fev1Llbrd))
+names(allDfL)<-age
 fwrite(allDf,here::here("lungFx10k.csv.gz"))
-fwrite(allDf,here::here("lungFxL10k.csv.gz"))
+fwrite(allDfL,here::here("lungFxL10k.csv.gz"))
 ```
 
 # Plots
